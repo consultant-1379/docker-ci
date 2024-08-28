@@ -1,0 +1,53 @@
+csm-version: '1.0'
+
+systems:
+- uid: LDA.base
+  name: LDA.Basic
+  version: 1.0.0-1
+  product-number: CXPXXXX
+  functions:
+  - lde.base
+  - lde.cba.if.base
+  - lde.sles12.sp2.os.base
+  - lde.pm
+  - coremw.core.base
+  - coremw.swm
+  - coremw.pmrm
+  - coremw.clmnodedetect
+  - coremw.cr
+  roles:
+  - role: FSs
+  - role: SCs
+    assigned-to:
+    - SC-1
+roles:
+- uid: SCs
+  name: SCs
+  services:
+  - lde.base.all
+  - lde.cba.if.all
+  - lde.sles12.sp2.os.all
+  - lde.pmcounters.all
+  - coremw.core.aggregation
+  - coremw.core.all
+  - coremw.swm.aggregation
+  - coremw.swm.all
+  - coremw.pmrm.aggregation
+  - coremw.pmrm.all
+  - coremw.clmnodedetect.aggregation
+  - coremw.cr.all
+  scaling-policy:
+    scaling: 'NO'
+  constraints:
+    external: 'YES'
+- uid: FSs
+  name: FSs
+  description: 'Role: nfsserver'
+  services:
+  - lde.base.all
+  - lde.sharedfs.config.all
+  - lde.sles12.sp2.jeos.all
+  scaling-policy:
+    scaling: 'no'
+  constraints:
+    external: 'yes'

@@ -1,0 +1,41 @@
+#!/bin/bash
+
+set -o errexit
+set -o nounset
+set -o pipefail
+
+IMAGE=$USER-run-box
+CONTAINER_NAME=${IMAGE}
+CURRENT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+IMAGE_EXISTS=$(docker images --quiet "${IMAGE}")
+ESM_BOX="${CURRENT_DIR}"/../boxes/ldews-ict.box
+CONFIG_DRIVE="${CURRENT_DIR}"/../boxes/configdrive.iso
+
+# Remove if any previous container exists with the container name
+set +o errexit
+docker rm "${CONTAINER_NAME}" --force --volumes &> /dev/null
+set -o errexit
+
+# Build the docker image if it does not exist
+#if [ -z "${IMAGE_EXISTS}" ]; then
+docker build --tag "${IMAGE}" --file Dockerfile.vagrant~esm.sut .
+#fi
+
+# Create the docker container
+docker create -it --privileged --cap-add=ALL --name "$CONTAINER_NAME" "$IMAGE" "$@" /bin/bash
+
+# Check if file exists
+if [ -f "$ESM_BOX" ]; then
+   docker cp "$ESM_BOX" "${CONTAINER_NAME}":/
+fi
+
+if [ -f "$CONFIG_DRIVE" ]; then
+   docker cp "$CONFIG_DRIVE" "${CONTAINER_NAME}":/
+fi
+
+# Start the container
+docker start $CONTAINER_NAME
+
+# Attach the container
+docker attach $CONTAINER_NAME
+exit 0

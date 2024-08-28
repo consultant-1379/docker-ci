@@ -1,0 +1,50 @@
+# Docker Build box
+
+The script will help in creating a vagrant box with
+ESM 2.0 flow
+
+## Pre-requisite Step to be performed
+
+1. Modify USER and PASSWORD environment variables in Dockerfile.vagrant~esm.box
+
+
+## Example Usage
+
+Execute following command to build new box:
+
+Usage:
+------
+   -h | --help
+     Display this help
+     Provide arguments with required cluster size and optional versionFile
+
+   Syntax: ./build-esm-box clusterSize [systemFile] [versionsFile]
+
+   Example: ./build-esm-box 2+0
+   Example: ./build-esm-box 2+2
+   Example: ./build-esm-box 2+0 system.yml versions.xml
+   Example: ./build-esm-box 2+2 system.yml versions.xml
+
+
+## Steps performed by the docker-build script
+
+  1. Build the docker image with username-esm-sut name
+
+  2. Create the container with username-esm-sut name
+
+  3. Copy system.yml and versions.xml file to container if user has provided as an input
+
+  4. Start the container and execute the script to create the box
+
+  5. Follow the logs and wait for the script to complete
+
+  6. Remove the container
+
+NOTE: Please refer the CBA-MW-composed.yml or CBA-MW-composed-4VM.yml to add more components to the model.
+
+## References
+
+[1] [Packer](https://packer.io/)
+[2] Dx Toolbox
+    http://calstore.internal.ericsson.com/ then navigate folder
+    "CBA Common Components and RDA / Dx Toolbox"

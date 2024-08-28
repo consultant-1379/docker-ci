@@ -1,0 +1,104 @@
+FROM armdockerhub.rnd.ericsson.se/ubuntu:14.04
+
+ARG COMMIT=null
+ARG REPOSITORY=null
+
+# User credentials. TODO: Management of these credentials should be improved
+# ENV USER ezabcxyz
+# ENV PASSWORD "abcxyz"
+ENV USER userid
+ENV PASSWORD "password or API key in inverted commas"
+
+LABEL commit=$COMMIT
+LABEL repository=$REPOSITORY
+
+ENV VAGRANTVERSION 1.9.1
+ENV DEBIAN_FRONTEND noninteractive
+
+# Install dependencies
+RUN apt-get update && \
+    apt-get install -y \
+        wget \
+        vim \
+        qemu \
+        qemu-kvm \
+        libvirt-bin \
+        ebtables \
+        dnsmasq \
+        libxslt-dev \
+        libxml2-dev \
+        libvirt-dev \
+        zlib1g-dev \
+        ruby-dev \
+        ssh \
+        openssh-client \
+        git \
+        make \
+        unzip \
+        curl \
+        expect \
+        xsltproc \
+    # Remove the debian packages after they are installed
+    && apt-get clean all
+
+RUN cat /dev/zero | ssh-keygen -q -N ""
+
+ENV DOWNLOADS /tmp/downloads
+
+# Install Vagrant
+RUN mkdir -p $DOWNLOADS && \
+    wget --quiet -P $DOWNLOADS https://releases.hashicorp.com/vagrant/${VAGRANTVERSION}/vagrant_${VAGRANTVERSION}_x86_64.deb && \
+    dpkg -i $DOWNLOADS/vagrant_${VAGRANTVERSION}_x86_64.deb && \
+    rm -rf $DOWNLOADS
+
+RUN vagrant plugin install --plugin-version 0.0.35 vagrant-libvirt
+
+# Download Artifactory Manager
+RUN AM_VERSION=$(curl -s "https://x-ci.rnd.ki.sw.ericsson.se/xci/md2/builds/com.ericsson.cba.dxtoolbox/dxtoolbox-am/latest?confidenceLevels=%5BcbaBaselineFunctionality=SUCCESS%5D" | grep -oP 'version\":"\K[^"]*') && \
+    wget --quiet -P /tmp/releases/ \
+         --user $USER \
+         --password $PASSWORD \
+         https://arm.rnd.ki.sw.ericsson.se/artifactory/proj-cba-dev-local/com/ericsson/cba/dxtoolbox/dxtoolbox-am/$AM_VERSION/dxtoolbox-am-$AM_VERSION-runtime-linux-cxp9026463.tar.gz
+
+# Download AIT Agents
+RUN AIT_AGENTS_VERSION=$(curl -s "https://x-ci.rnd.ki.sw.ericsson.se/xci/md2/builds/com.ericsson.cba.dxtoolbox/dxtoolbox-ait_agents/latest?confidenceLevels=%5BcbaBaselineFunctionality=SUCCESS%5D" | grep -oP 'version\":"\K[^"]*') && \
+    wget --quiet -P /tmp/releases/ \
+         --user $USER \
+         --password $PASSWORD \
+         https://arm.rnd.ki.sw.ericsson.se/artifactory/proj-cba-dev-local/com/ericsson/cba/dxtoolbox/dxtoolbox-ait_agents/$AIT_AGENTS_VERSION/dxtoolbox-ait_agents-$AIT_AGENTS_VERSION-runtime-linux-cxp9020536.tar.gz
+
+# Download AIT Dev
+RUN AIT_DEV_VERSION=$(curl -s "https://x-ci.rnd.ki.sw.ericsson.se/xci/md2/builds/com.ericsson.cba.dxtoolbox/dxtoolbox-ait_dev/latest?confidenceLevels=%5BcbaBaselineFunctionality=SUCCESS%5D" | grep -oP 'version\":"\K[^"]*') && \
+    wget --quiet -P /tmp/releases/ \
+         --user $USER \
+         --password $PASSWORD \
+         https://arm.rnd.ki.sw.ericsson.se/artifactory/proj-cba-dev-local/com/ericsson/cba/dxtoolbox/dxtoolbox-ait_dev/$AIT_DEV_VERSION/dxtoolbox-ait_dev-$AIT_DEV_VERSION-runtime-cxp9019388.tar.gz
+
+# Extract all the packages and ensure the source.bash script is always run
+RUN mkdir -p /opt/dxtools/ && \
+    cd /tmp/releases/ && \
+    for file in *.tar.gz; do tar xzf $file -C /opt/dxtools/; done && \
+    rm -rf /tmp/releases/
+
+# Install AIT packages install scripts to generate bash file
+RUN cd /opt/dxtools/ && \
+    for file in $(find . -name install_\*.sh); do ./$file .; done
+
+# Source AM and AIT packages
+RUN echo "for file in \$(find /opt/dxtools/ -name source\*.bash); do source \$file; done" >> /etc/bash.bashrc
+
+# Artifactory Manager environment variables
+ENV AM_HOME /opt/dxtools/.am/
+ENV AM_WORKSPACE $AM_HOME/workspace/
+ENV AM_CACHE $AM_HOME/cache/
+
+# Add the config files
+COPY config/ArtifactManager.cfg $AM_WORKSPACE/
+
+# Add scripts
+COPY scripts/start-libvirt /usr/local/bin
+RUN chmod 755 /usr/local/bin/start-libvirt
+COPY scripts/* /
+
+# Add configuration files
+COPY config/ /

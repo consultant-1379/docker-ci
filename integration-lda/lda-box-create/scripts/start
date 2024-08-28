@@ -1,0 +1,189 @@
+#!/bin/bash
+#   This script creates vagrant lda box with all the components specified in versionFile
+#
+#   Input arguments for running this script:
+#       1. CLUSTER_SIZE
+#       2. Version file path
+
+versionFile=$CSM_CONFIG/versions.xml
+
+CLUSTER_SIZE=$1
+
+#Validate the number of arguments passed to the script
+if [ $# -eq 2 ]; then
+    if [ $2 == "true" ]; then
+        EXTERNAL_FS=$2
+    else
+        versionFile=$2
+    fi
+elif [ $# -eq 3 ]; then
+    EXTERNAL_FS=$2
+    versionFile=$3
+elif [ $# -eq 5 ]; then
+    versionFile=$3
+    LDE_SUGAR=$5
+    KERNELMODULE=$4
+    EXTERNAL_FS=$2
+else
+   echo "Error: Improper Arguments"
+   exit 1
+fi
+
+# Validate clusterSize
+NODE_REGEX="^[1,2][+][0,1,2]$"
+if [[ ! $CLUSTER_SIZE  =~ ${NODE_REGEX} ]]; then
+    echo "Error: Cluster Size can only be 1+0,1+1,2+0 or 2+2"
+    myHelp
+    exit 1
+fi
+
+# Setup DX-Tools
+for file in $(find /opt/dxtools/ -name source.bash);
+do
+    source $file;
+done
+
+# Add username and password to ArtifactManager.cfg file
+sed -i 's/.*username =.*/username = '$ADMIN_USER'/' /root/.am//workspace/ArtifactManager.cfg
+sed -i 's/.*password =.*/password = '$ADMIN_PASSWORD'/' /root/.am//workspace/ArtifactManager.cfg
+
+# Function to retry AM command execution
+function executeAMCommandWithRetry() {
+    command=$1
+    set +e
+    set -o pipefail
+    # Maximum attemps to retry AM command due to connectivity issues
+    MAX_RETRY_ATTEMPTS=5
+    for ((retryLoop=1; retryLoop < $MAX_RETRY_ATTEMPTS; retryLoop++))
+    {
+        $command |& tee /tmp/am_log.txt
+        if [ $? -ne 0 ]; then
+            if grep -q "No connectivity to Artifactory" /tmp/am_log.txt; then
+                echo "Failed due to connectivity issue. Retrying again..."
+            else
+                echo "Error: Downloading of packages failed"
+                exit 1
+            fi
+        else
+            break
+        fi
+    }
+    set +o pipefail
+    set -e
+}
+
+echo "Versions File path: ${versionFile}"
+
+if [ $EXTERNAL_FS ]; then
+    ./generateCSMFile $CLUSTER_SIZE $versionFile $EXTERNAL_FS
+else
+    ./generateCSMFile $CLUSTER_SIZE $versionFile
+fi
+
+if [ "$?" -ne "0" ]; then
+  echo "Error: something went wrong"
+  exit 1
+fi
+
+#Exit on error
+set -xe
+
+echo "csm yaml path: $CSM_WORKSPACE/csm.yml"
+
+WORKDIR=/workdir
+BINARY_REPO=$CSM_HOME/runtime-repo
+CSM2KIWI_OUTPUT=/csm2kiwi_output
+PATH_TO_CHROOT=/PATH_TO_CHROOT
+mkdir -p $CSM2KIWI_OUTPUT
+rm -rf $PATH_TO_CHROOT
+mkdir -p $PATH_TO_CHROOT
+
+# Download the lde_api
+COMMAND_TO_EXECUTE="artifact_manager --input /root/.csm/config/kiwi_version.xml --get-packages --outputDir /LDE_API --flat"
+executeAMCommandWithRetry "$COMMAND_TO_EXECUTE"
+
+# Validate and generate the csm.yml file
+csmlint
+csmcli purge --confirm
+csmconfig init
+
+csmcli set-attribute services[uid:sec.secm]:components:attributes:SSH_SELECTEDMACS_DEFAULT "FULL_SUPPORTED"
+
+# Enabling of audit logging in LDA
+AUDITAPI=$CSM_WORKSPACE"/config/initial/lde.hardening.audit/lde-hardening-audit.yaml"
+if [ -f "$AUDITAPI" ]; then
+    sed -i 's/enable_auditd_cmd_logging: false/enable_auditd_cmd_logging: true/' $AUDITAPI
+fi
+
+# Enabled 'Disabling of Kernel Module' feature
+KMAPI=$CSM_WORKSPACE"/config/initial/lde.cba.if/lde-kernel-modules.yaml"
+if [ -f "$KMAPI" ] && [ $KERNELMODULE == "enabled" ]; then
+    sed -i 's/disable_loading_kernel_modules: false/disable_loading_kernel_modules: true/' $KMAPI
+fi
+
+# Disable 'LDE SUGaR' feature
+LDESUGARAPI=$CSM_WORKSPACE"/config/initial/lde.base/lde-nonroot.yaml"
+if [ -f "$LDESUGARAPI" ] && [ $LDESUGAR == "disabled" ]; then
+    sed -i 's/lde_runas_nonroot,enabled/lde_runas_nonroot,disabled/' $LDESUGARAPI
+fi
+
+# Modify lde-sharedfs.yaml for SC-1 as node name
+SHAREDFS_FILE_PATH=$(find $CSM_WORKSPACE/ -name "lde-sharedfs.yaml")
+sed -i "s/node-1/SC-1/g" $SHAREDFS_FILE_PATH
+
+#update csm model
+csmconfig update
+
+echo "Creating config.xml using csm2kiwi init"
+csm2kiwi init
+csm2kiwi create --output $CSM2KIWI_OUTPUT
+
+# Starting libvirt
+start-libvirt
+
+echo "Writing script to build image on KIWI server"
+echo "kiwi system build --description ./csm2kiwi_output --target-dir image_directory/ --allow-existing-root" > kiwi_image_build.sh
+chmod 755 kiwi_image_build.sh
+
+# TODO: Remove hard-coded sdk and chroot version
+echo "setting up kiwi using LDE_API"
+tar -zxf /LDE_API/lde-reference_os-1.11.0-14-chroot-sle12.tar.gz -C $PATH_TO_CHROOT
+tar -zxf /LDE_API/lde-reference_os-1.11.0-14-sdk-sle12.tar.gz -C $PATH_TO_CHROOT
+
+# Modify config.xml to create vagrant box
+sed -i "s/qcow2/vagrant/g" $CSM2KIWI_OUTPUT/config.xml
+sed -i "s/<\/type>//g" $CSM2KIWI_OUTPUT/config.xml
+sed -i '/image=/a <vagrantconfig provider="libvirt" virtualsize="20"/>' $CSM2KIWI_OUTPUT/config.xml
+sed -i "/vagrantconfig/a <\/type>" $CSM2KIWI_OUTPUT/config.xml
+
+cp -r $CSM2KIWI_OUTPUT $PATH_TO_CHROOT
+cp $PATH_TO_CHROOT/kiwi_root/switch-root.sh $PATH_TO_CHROOT
+cp /kiwi_image_build.sh $PATH_TO_CHROOT
+cd $PATH_TO_CHROOT
+
+# Make changes to switch-root file
+sed -i '/startup.sh/i chroot $ROOT_DIR /kiwi_image_build.sh; \\' $PATH_TO_CHROOT/switch-root.sh
+sed -i "/startup.sh.*/d" $PATH_TO_CHROOT/switch-root.sh
+
+# start the lda_api to create lda image
+./switch-root.sh -c "kiwi system build" . | tee /tmp/switch-root_log.txt
+
+#TODO Check the loop devices and then remove
+dmsetup ls
+# remove loop device
+#LOOP_DEVICE=$(grep -i 'installing.*loop*' /tmp/switch-root_log.txt | cut -d/ -f3)p1
+#dmsetup remove $LOOP_DEVICE
+
+# Validate if lda image is created
+file=$PATH_TO_CHROOT/image_directory/*".box"
+if [ ! -f $file ]; then
+   echo "Error: Failed to build image"
+   exit 1
+else
+   echo "Image created:" $file
+fi
+
+cd /
+
+mv $PATH_TO_CHROOT/image_directory/*".box" /lda.box
+cp -p $CSM_WORKSPACE/ovf-env.xml /

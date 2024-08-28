@@ -1,0 +1,45 @@
+# start
+
+The script will help in creating a vagrant box with
+ESM 2.0 flow
+
+## Example Usage
+
+Execute following command to build new box:
+
+Usage:
+------
+   -h | --help
+     Display this help
+     Provide arguments with required cluster size and optional versionFile
+
+   Syntax: ./start target clusterSize [versionsFile]
+
+   Example: ./start esm 2+0
+   Example: ./start esm 2+2
+   Example: ./start legacy 2+0 versions.xml
+   Example: ./start legacy 2+2 versions.xml
+
+NOTE: versionFile is only required if target is legacy. Default versionFile: /versions.xml
+
+
+## Steps performed by the start script if target is legacy
+
+  1. Download the lde box based on the lde version mentioned in versionFile
+
+  2. Adds the vagrant box
+
+  3. Starts the cluster
+
+  4. Download the components using AM tool
+
+  4. Installs the components on the cluster using AIT Tool
+
+## Steps performed by the start script if target is esm
+
+  1. Adds the vagrant box available in the /boxes directory
+
+  2. Starts the cluster
+
+
+NOTE: Payload box will also be downloaded if cluster size is 2+2

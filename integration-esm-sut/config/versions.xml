@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<products>
+  <component>
+    <name>coremw_x86_64</name>
+    <version>cbaBaselineFunctionality</version>
+    <downloadfiles>-deployment</downloadfiles>
+  </component>
+  <component>
+    <name>ldews</name>
+    <version>cbaBaselineFunctionality</version>
+    <downloadfiles>-deployment</downloadfiles>
+  </component>
+  <component>
+    <name>ldews-brf_script</name>
+    <version>cbaBaselineFunctionality</version>
+    <downloadfiles>-deployment</downloadfiles>
+  </component>
+  <component>
+    <name>coremw_x86_64-brf_c</name>
+    <version>cbaBaselineFunctionality</version>
+    <downloadfiles>-deployment</downloadfiles>
+  </component>
+  <component>
+    <name>coremw_x86_64-brf_eia</name>
+    <version>cbaBaselineFunctionality</version>
+    <downloadfiles>-deployment</downloadfiles>
+  </component>
+</products>

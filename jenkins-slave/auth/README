@@ -1,0 +1,4 @@
+This directory is intended to contain sshekey file and password file
+
+sshkey file - contains private ssh key of jenkins master
+password file - contains password string for encrypting ssh key file

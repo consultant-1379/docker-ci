@@ -1,0 +1,38 @@
+{
+    "builders": [{
+
+        "headless": "true",
+        "type": "qemu",
+        "iso_url": "file:///workdir/for-ict/install.iso",
+        "iso_checksum_type": "none",
+        "disk_size" : 30000,
+        "format" : "qcow2",
+
+        "communicator": "none",
+        "shutdown_command": "",
+
+        "http_directory": ".",
+        "boot_wait": "5s",
+
+        "qemuargs": [
+
+            [ "-m", "2048" ],
+            [ "-nographic", "" ],
+            [ "-device", "VGA" ],
+            [ "-no-reboot"]
+        ],
+
+        "boot_command": [
+            "<enter>"
+       ]
+
+     }],
+
+
+
+    "post-processors": [{
+        "output": "ldews-ict.box",
+        "type": "vagrant"
+    }]
+
+}

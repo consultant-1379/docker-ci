@@ -1,0 +1,140 @@
+# This dockerfile creates docker image with many DX tools and their dependencies pre-installed
+FROM armdockerhub.rnd.ericsson.se/ubuntu:14.04
+
+ARG COMMIT=null
+ARG REPOSITORY=null
+
+LABEL commit=$COMMIT
+LABEL repository=$REPOSITORY
+
+RUN rm /bin/sh && ln -s /bin/bash /bin/sh
+
+# User credentials. TODO: Management of these credentials should be improved
+# ENV USER ezabcxyz
+# ENV PASSWORD "abcxyz"
+ARG admin_user=null
+ARG admin_password=null
+
+ENV ADMIN_USER=$admin_user
+ENV ADMIN_PASSWORD=$admin_password
+
+# Installation of dependencies for the different tools
+    # Refresh package information
+
+RUN apt-get update && \
+    apt-get install -y desktop-file-utils
+
+RUN apt-get update && \
+    # Requried by CSM tools
+    apt-get install -y      \
+            bash-completion \
+            python          \
+            python-yaml \
+    # Required by dot2csm
+            graphviz \
+    # Required by AM
+            curl             \
+            libxml2-utils \
+    # Required by camp2csm
+            xsltproc \
+    # Required by btd
+            rpm             \
+            python-crypto   \
+            python-paramiko \
+    # Required to run make from Makefile
+            make \
+    # Required by rpmlint
+            binutils      \
+            python-rpm && \
+    # Install rpmlint
+    cd /tmp && \
+    curl http://se.archive.ubuntu.com/ubuntu/pool/universe/r/rpmlint/rpmlint_1.9-6_all.deb > rpmlint.deb && \
+    dpkg -i rpmlint.deb && \
+    rm -rf rpmlint.deb &&  \
+    # Required by csmt
+    apt-get install -y     \
+            genisoimage    \
+            qemu           \
+            qemu-kvm       \
+            libvirt-bin && \
+    # Required by csm2kiwi
+    apt-get install -y    \
+            createrepo && \
+    # Remove the debian packages after they are installed
+    apt-get clean all
+
+# Installation of non tool related packages
+RUN apt-get install -y        \
+            vim               \
+            wget              \
+            openssh-client && \
+    apt-get clean all
+
+# Download Artifactory Manager
+RUN AM_VERSION=$(curl -s "https://x-ci.rnd.ki.sw.ericsson.se/xci/md2/builds/com.ericsson.cba.dxtoolbox/dxtoolbox-am/latest?confidenceLevels=%5BcbaBaselineFunctionality=SUCCESS%5D" | grep -oP 'version\":"\K[^"]*') && \
+    wget --quiet -P /tmp/releases/ \
+         --user $ADMIN_USER \
+         --password $ADMIN_PASSWORD \
+         https://arm.rnd.ki.sw.ericsson.se/artifactory/proj-cba-dev-local/com/ericsson/cba/dxtoolbox/dxtoolbox-am/$AM_VERSION/dxtoolbox-am-$AM_VERSION-runtime-linux-cxp9026463.tar.gz
+
+# Download csmt
+RUN CSMT_VERSION=$(curl -s "https://x-ci.rnd.ki.sw.ericsson.se/xci/md2/builds/com.ericsson.cba.dxtoolbox/dxtoolbox-csmt/latest?confidenceLevels=%5BcbaBaselineFunctionality=SUCCESS%5D" | grep -oP 'version\":"\K[^"]*') && \
+    wget --quiet -P /tmp/releases/ \
+         --user $ADMIN_USER \
+         --password $ADMIN_PASSWORD \
+         https://arm.rnd.ki.sw.ericsson.se/artifactory/proj-cba-all/com/ericsson/cba/dxtoolbox/dxtoolbox-csmt/$CSMT_VERSION/dxtoolbox-csmt-$CSMT_VERSION-runtime-linux-cxp9029274.tar.gz
+
+# Download addons
+RUN ADDONS_VERSION=$(curl -s "https://x-ci.rnd.ki.sw.ericsson.se/xci/md2/builds/com.ericsson.cba.dxtoolbox/dxtoolbox-addons/latest?" | grep -oP 'version\":"\K[^"]*' ) && \
+    wget --quiet -P /tmp/releases/ \
+         --user $ADMIN_USER \
+         --password $ADMIN_PASSWORD \
+         https://arm.rnd.ki.sw.ericsson.se/artifactory/proj-cba-all/com/ericsson/cba/dxtoolbox/dxtoolbox-addons/$ADDONS_VERSION/dxtoolbox-addons-$ADDONS_VERSION-runtime-linux-cxp9033818.tar.gz
+
+# Extract all the packages and ensure the source.bash script is always run
+RUN mkdir -p /opt/dxtools/ && \
+    cd /tmp/releases/ && \
+    for file in *.tar.gz; do tar xzf $file -C /opt/dxtools/; done && \
+    echo "for file in \$(find /opt/dxtools/ -name source.bash); do source \$file; done" >> /etc/bash.bashrc && \
+    rm -rf /tmp/releases/
+
+# Install packages required at runtime by KVM
+RUN apt-get install -y qemu \
+                       qemu-kvm \
+                       libvirt-bin && \
+    apt-get clean all
+
+# Install the JFrog CLI (Used to interact with Artifactory)
+RUN cd /usr/bin/ && curl -fL https://getcli.jfrog.io | sh
+
+# CSM environment variables
+ENV CSM_HOME /root/.csm/
+ENV CSM_WORKSPACE $CSM_HOME/workspace/
+ENV CSM_REGISTRY $CSM_HOME/registry/
+ENV CSM_CONFIG $CSM_HOME/config/
+
+# Artifactory Manager environment variables
+ENV AM_HOME /root/.am/
+ENV AM_WORKSPACE $AM_HOME/workspace/
+ENV AM_CACHE $AM_HOME/cache/
+
+# Create necessary directories
+RUN mkdir -p $AM_WORKSPACE && \
+    mkdir -p $CSM_WORKSPACE && \
+    mkdir -p $CSM_REGISTRY && \
+    mkdir -p /local_repo
+
+# Copy scripts
+COPY scripts/start /
+COPY scripts/generateCSMFile /
+COPY scripts/lde_version.xsl.template /
+COPY scripts/start-libvirt /usr/local/bin/
+COPY scripts/start-libvirt /usr/local/bin/
+
+# Copy the config files
+COPY config/versions.xml $CSM_CONFIG/versions.xml
+COPY config/kiwi_version.xml $CSM_CONFIG/kiwi_version.xml
+COPY config/ArtifactManager.cfg $AM_WORKSPACE/
+
+# Entrypoint
+WORKDIR /

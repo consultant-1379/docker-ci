@@ -1,0 +1,49 @@
+
+# Docker-ci Tool.
+
+Docker-CI is a containerized framework build on docker to
+provide suitable test environment for building components
+and running tests (e.g. UT, FT, Integration tests etc) in CI
+
+
+## Pre-requisites
+1. Hardwares to host Docker-CI tool
+2. Softwares:
+   a. Ubuntu 14.04 recommended (with hypervisor capabilities)
+   b. Docker 17.03.0-ce recommended
+   c. Docker-Compose 17.03.0-ce recommended
+
+## Contents
+Features delivered in docker-ci
+
+NOTE: For detailed information and usage on below features refer README in corresponding directory
+
+### Jenkins-slave
+
+docker-ci tool has scripts to create container slaves for a particular Jenkins master.
+Scaling is possible for slave containers
+
+### SWM 1.0 flow
+
+Supports 2+0 and 2+2 as default cluster configurations
+Supports AIT way of component installation
+Supports Scaling of nodes
+
+### SWM 2.0 flow (LDEwS)
+
+Supports 2+0 and 2+2 as default cluster configurations
+Supports Scaling of nodes
+
+### SWM 2.0 flow (LDEfS)
+
+Supports 1+0 and 1+1 as default cluster configurations
+
+## References
+
+[1] [Docker](https://docs.docker.com/)
+[2] [Docker compose](https://docs.docker.com/compose/compose-file/compose-file-v2/)
+[3] [Packer](https://packer.io/)
+[4] Dx Toolbox
+    http://calstore.internal.ericsson.com/ then navigate folder
+    "CBA Common Components and RDA / Dx Toolbox"
+[5] [Vagrant](https://www.vagrantup.com/)

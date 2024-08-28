@@ -1,0 +1,170 @@
+# Copyright (c) Ericsson AB 2018  All rights reserved.
+#
+# The information in this document is the property of Ericsson.
+#
+# Except as specifically authorized in writing by Ericsson, the
+# receiver of this document shall keep the information contained
+# herein confidential and shall protect the same in whole or in
+# part from disclosure and dissemination to third parties.
+#
+# Disclosure and disseminations to the receivers employees shall
+# only be made on a strict need to know basis.
+
+vm=ENV["vm"]
+
+# PL node vlaue start from
+$firstPLNumber = 3
+
+Vagrant.configure(2) do |config|
+
+  # Vagrant box to use. This box must exist in the local Vagrant repo
+  config.vm.box = "ldews"
+
+  # vagrant issues #1673..fixes hang with configure_networks
+  config.ssh.shell = "bash -c 'BASH_ENV=/etc/profile exec bash'"
+
+  # When Vagrant inserts a new SSH key into node 1, it affects node 2
+  # due to the shared NFS filesystem. Since Vagrant is not aware of this,
+  # it fails to login to node 2. We use the default insecure key as a workaround.
+  config.ssh.insert_key = false
+
+  # libvirt provider VM configuration
+  config.vm.provider :libvirt do |domain|
+    domain.memory = 2048
+    domain.nested = true
+  end
+
+  # SC-1 definition
+  config.vm.define :"SC-1" do |node|
+
+    node.vm.hostname = 'SC-1'
+
+    # Sync folders should be turned of. LDE has NFS instead.
+    node.vm.synced_folder '.', '/vagrant', :disabled => true
+
+    # We need to explicitly set the MAC adress of the management network
+    # for each node since this needs to match the MAC set in cluster.conf
+    # TODO: Enable IPV6 after changing from existing server
+    node.vm.provider :libvirt do |domain|
+        domain.management_network_address = "10.0.2.15/24"
+        domain.management_network_mac = "0200000f0101"
+        domain.management_network_guest_ipv6 = "no"
+        if ENV["target"] == "esm"
+            domain.storage :file, :device => :cdrom, :bus => :ide, :type => :raw, :path => "/configdrive.iso"
+        end
+    end
+
+    # Setup the private network used for node internal communication
+    # TODO: Enable IPV6 after changing from existing server
+    node.vm.network :private_network,
+      :ip => '192.168.1.0/24',
+      :auto_config => false,
+      :libvirt__forward_mode => 'veryisolated',
+      :libvirt__dhcp_enabled => false,
+      :libvirt__network_name => 'private_network',
+      :libvirt__guest_ipv6 => 'no',
+      :mac => '0200000f0102'
+  end
+
+  # SC-2
+  config.vm.define :"SC-2" do |node|
+
+    node.vm.hostname = 'SC-2'
+
+    # Sync folders should be turned of. LDE has NFS instead.
+    node.vm.synced_folder '.', '/vagrant', :disabled => true
+
+    # We need to explicitly set the MAC adress of the management network
+    # for each node since this needs to match the MAC set in cluster.conf
+    # TODO: Enable IPV6 after changing from existing server
+    node.vm.provider :libvirt do |domain|
+        domain.management_network_address = "10.0.2.16/24"
+        domain.management_network_mac = "0200000f0201"
+        domain.management_network_guest_ipv6 = "no"
+        if ENV["target"] == "esm"
+            domain.storage :file, :device => :cdrom, :bus => :ide, :type => :raw, :path => "/configdrive.iso"
+        end
+    end
+
+    # Setup the private network used for node internal communication
+    # TODO: Enable IPV6 after changing from existing server
+    node.vm.network :private_network,
+      :ip => '192.168.1.0/24',
+      :auto_config => false,
+      :libvirt__forward_mode => 'veryisolated',
+      :libvirt__dhcp_enabled => false,
+      :libvirt__network_name => 'private_network',
+      :libvirt__guest_ipv6 => 'no',
+      :mac => '0200000f0202'
+  end
+
+
+# Configuring payloads
+def define_payload(config, mac1, mac2, plname, incrementip, payloadip)
+
+  #Defining local variable to instance variable
+  $plname=plname
+
+  config.vm.define :"#$plname" do |node|
+
+        #Defining local variable to instance variable
+        $plname=plname
+        $mac1=mac1
+        $mac2=mac2
+        $incrementip=incrementip
+        $payloadip=payloadip
+
+        node.vm.box = "payload"
+        node.vm.hostname = "#$plname"
+        node.ssh.insert_key = false
+
+        # Sync folders should be turned of. LDE has NFS instead.
+        node.vm.synced_folder '.', '/vagrant', :disabled => true
+
+        # We need to explicitly set the MAC adress of the management network
+        # for each node since this needs to match the MAC set in cluster.conf
+        node.vm.provider :libvirt do |domain|
+            domain.management_network_address = "#$payloadip"
+            domain.management_network_guest_ipv6 = "no"
+            domain.management_network_mac = "#$mac1"
+        end
+
+        # Setup the private network used for node internal communication
+        node.vm.network :private_network,
+          :ip => '192.168.1.0/24',
+          :auto_config => false,
+          :libvirt__guest_ipv6 => 'no',
+          :libvirt__forward_mode => 'veryisolated',
+          :libvirt__dhcp_enabled => false,
+          :libvirt__network_name => 'private_network',
+          :mac => "#$mac2"
+  end
+end
+
+  # Based on the number of payloads count passed in VM environment value,
+  # we will loop the below code to generate the vagrant configuration during runtime
+  $loopCount = 1
+  while $firstPLNumber.to_i <= vm.to_i  do
+    # PL declaration
+    # plname will be hostname Ex: PL-3
+    plname = "PL-#$firstPLNumber"
+
+    # increment the SC base IP value to 1 for assigning new IP to payloads
+    incrementip = "16".to_i + $loopCount
+    payloadip= "10.0.2." + incrementip.to_s + "/24"
+
+    # update the mac value based on payload number
+    if $firstPLNumber.to_i <= 9
+        mac1 = "0200000f0#$firstPLNumber""01"
+        mac2 = "0200000f0#$firstPLNumber""02"
+    else
+        mac1 = "0200000f#$firstPLNumber""01"
+        mac2 = "0200000f#$firstPLNumber""02"
+    end
+
+    define_payload config, mac1, mac2, plname, incrementip, payloadip
+
+    $firstPLNumber +=1
+    $loopCount +=1
+  end
+end

@@ -1,0 +1,31 @@
+# Docker Build box
+
+The script will help in creating jenkins slave containers
+
+
+In order to create slaves we require private ssh key of jenkins master.
+The private ssh key of jenkins master is encrypted using ansible vault.
+User can create their own password file to decrypt the private ssh key of jenkins master.
+
+## Prerequisite steps to be performed in docker-ci/jenkins-slave/auth/ directory:
+
+1. Create a sshkey file and copy the private ssh key of jenkins master.
+2. Create a password file and write any password inside the file for encrypting the key when it runs in container.
+3. Provide jenkins url in docker-compose.yml file
+
+## Steps to be followed for creating jenkins slaves
+
+  # Starting 1 slave container
+  1. docker-compose -f docker-compose.yml up -d --build
+  # --build option is optional and to be only used if user intends to re-create the image or using it for the first time
+
+  # Scaling the slave containers
+  2. docker-compose -f docker-compose.yml scale build-start=num_of_slave_to_scal
+
+  # Stopping the slave containers
+  3. docker-compose -f docker-compose.yml scale -t 100000 build-start=0
+
+
+## References
+
+[1] [Docker compose](https://docs.docker.com/compose/compose-file/compose-file-v2/)

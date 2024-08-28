@@ -1,0 +1,161 @@
+#!/bin/bash
+
+set -o errexit
+set -o pipefail
+
+function myHelp () {
+# Script used to Generate Vagrantfile
+cat <<-END
+Usage:
+------
+   -h | --help
+     Display this help
+     Provide arguments with required CLUSTER SIZE and EXTERNAL FS if needed
+
+   Syntax: ./genVagrantFile.sh CLUSTER_SIZE EXTERNAL_FS
+
+   Example: ./genVagrantFile.sh 1+1 true
+   Example: ./genVagrantFile.sh 1+0
+
+END
+}
+
+CLUSTER_SIZE=$1
+EXTERNAL_FS=$2
+
+# Creating Vagrantfile
+echo "
+Vagrant.configure(\"2\") do |config|
+    config.ssh.username =\"root\"
+    config.ssh.insert_key = true
+    config.ssh.private_key_path = [\"~/.ssh/id_rsa\"]" > /Vagrantfile
+
+if [ ! $CLUSTER_SIZE == "1+0" ] || [ $EXTERNAL_FS ] ; then
+  echo "
+    config.vm.provision \"file\", source: \"~/.ssh/id_rsa\", destination: \"~/.ssh/id_rsa\" " >> /Vagrantfile
+fi
+
+if [ $CLUSTER_SIZE == "2+0" ] || [ $CLUSTER_SIZE == "2+2" ]; then
+  echo "
+    config.vm.provision \"shell\", inline: \"echo 192.168.2.3 SC-2 >> /etc/hosts\"
+    config.vm.provision \"shell\", inline: \"ssh -o StrictHostKeyChecking=no SC-2 echo \$?\" " >> /Vagrantfile
+fi
+
+if [ $CLUSTER_SIZE == "1+1" ] ; then
+  echo "
+    config.vm.provision \"shell\", inline: \"echo 192.168.2.5 PL-2 >> /etc/hosts\"
+    config.vm.provision \"shell\", inline: \"ssh -o StrictHostKeyChecking=no PL-2 echo \$?\" " >> /Vagrantfile
+fi
+
+if [ $CLUSTER_SIZE == "2+2" ] ; then
+  echo "
+    config.vm.provision \"shell\", inline: \"echo 192.168.2.5 PL-3 >> /etc/hosts\"
+    config.vm.provision \"shell\", inline: \"ssh -o StrictHostKeyChecking=no PL-3 echo \$?\"
+    config.vm.provision \"shell\", inline: \"echo 192.168.2.6 PL-4 >> /etc/hosts\"
+    config.vm.provision \"shell\", inline: \"ssh -o StrictHostKeyChecking=no PL-4 echo \$?\" " >> /Vagrantfile
+fi
+
+if [ $EXTERNAL_FS ] ; then
+  echo "
+    config.vm.provision \"shell\", inline: \"echo 192.168.2.4 FS-1 >> /etc/hosts\"
+    config.vm.provision \"shell\", inline: \"ssh -o StrictHostKeyChecking=no FS-1 echo \$?\" " >> /Vagrantfile
+fi
+
+echo "
+    config.vm.provision \"shell\", inline: \"service rsyslog restart\"
+
+    config.vm.provider :libvirt do |libvirt|
+        libvirt.management_network_name = \"vagrant-network\"
+        libvirt.management_network_address = \"192.168.2.0/24\"
+        libvirt.management_network_guest_ipv6 = \"no\"
+    end
+    config.vm.define :\"SC-1\" do |node|
+        node.vm.synced_folder '.', '/vagrant', :disabled => true
+        node.vm.box = \"lda\"
+        node.vm.network \"private_network\",ip:\"192.168.2.2\"
+        node.vm.provision \"shell\", path: \"/CheckClusterStatus.sh\"
+
+        node.vm.provider :libvirt do |domain|
+        domain.memory = 2048
+        domain.storage :file, :device => :cdrom, :path => '/config_drives/SC-1-configdrive.iso'
+        end
+    end" >> /Vagrantfile
+
+if [ $EXTERNAL_FS ] ; then
+  echo "
+    config.vm.define :\"FS-1\" do |node|
+        node.vm.synced_folder '.', '/vagrant', :disabled => true
+        node.vm.box = \"lda\"
+        node.vm.network \"private_network\",ip:\"192.168.2.4\"
+
+        node.vm.provider :libvirt do |domain|
+        domain.memory = 2048
+        domain.storage :file, :device => :cdrom, :path => '/config_drives/FS-1-configdrive.iso'
+        end
+    end" >> /Vagrantfile
+fi
+
+if [ $CLUSTER_SIZE == "2+0" ] || [ $CLUSTER_SIZE == "2+2" ]; then
+  echo "
+    config.vm.define :\"SC-2\" do |node|
+        node.vm.synced_folder '.', '/vagrant', :disabled => true
+        node.vm.box = \"lda\"
+        node.vm.network \"private_network\",ip:\"192.168.2.3\"
+        node.vm.provision \"shell\", path: \"/CheckClusterStatus.sh\"
+
+        node.vm.provider :libvirt do |domain|
+        domain.memory = 2048
+        domain.storage :file, :device => :cdrom, :path => '/config_drives/SC-2-configdrive.iso'
+        end
+   end" >> /Vagrantfile
+fi
+
+if [ $CLUSTER_SIZE == "1+1" ] ; then
+  echo "
+    config.vm.define :\"PL-2\" do |node|
+
+        #Defining local variable to instance variable
+        node.vm.synced_folder '.', '/vagrant', :disabled => true
+        node.vm.box = \"lda\"
+        node.vm.network \"private_network\",ip:\"192.168.2.5\"
+        node.vm.provision \"shell\", path: \"/CheckClusterStatus.sh\"
+
+        node.vm.provider :libvirt do |domain|
+        domain.memory = 2048
+        domain.storage :file, :device => :cdrom, :path => \"/config_drives/PL-2-configdrive.iso\"
+        end
+    end" >>  /Vagrantfile
+fi
+
+if [ $CLUSTER_SIZE == "2+2" ] ; then
+  echo "
+    config.vm.define :\"PL-3\" do |node|
+
+        #Defining local variable to instance variable
+        node.vm.synced_folder '.', '/vagrant', :disabled => true
+        node.vm.box = \"lda\"
+        node.vm.network \"private_network\",ip:\"192.168.2.5\"
+        node.vm.provision \"shell\", path: \"/CheckClusterStatus.sh\"
+
+        node.vm.provider :libvirt do |domain|
+        domain.memory = 2048
+        domain.storage :file, :device => :cdrom, :path => \"/config_drives/PL-3-configdrive.iso\"
+        end
+    end
+
+    config.vm.define :\"PL-4\" do |node|
+
+        #Defining local variable to instance variable
+        node.vm.synced_folder '.', '/vagrant', :disabled => true
+        node.vm.box = \"lda\"
+        node.vm.network \"private_network\",ip:\"192.168.2.6\"
+        node.vm.provision \"shell\", path: \"/CheckClusterStatus.sh\"
+
+        node.vm.provider :libvirt do |domain|
+        domain.memory = 2048
+        domain.storage :file, :device => :cdrom, :path => \"/config_drives/PL-4-configdrive.iso\"
+        end
+    end" >> /Vagrantfile
+fi
+echo "end" >> /Vagrantfile
+

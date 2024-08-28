@@ -1,0 +1,39 @@
+# run-cluster
+
+The script will help in starting a container where user can
+start a cluster using vagrant
+
+## Pre-requisite Step to be performed
+
+1. Modify USER and PASSWORD environment variables in Dockerfile.vagrant~lda.sut
+
+## Example Usage
+
+Execute following command to start the cluster:
+
+Usage:
+------
+   -h | --help
+     Display this help
+     Provide arguments with required cluster size and optional versionFile
+
+   Syntax: ./run-cluster
+
+## Steps performed by the docker-build script
+
+  1. Build the docker image with username-run-box name
+
+  2. Create the container with username-run-box name
+
+  3. Copy lda.box and ovf-env.xml to container
+
+  4. Start the container
+
+  5. Provide access to container using bash shell for user to start the cluster
+
+## References
+
+[1] [Vagrant](https://www.vagrantup.com/)
+[2] Dx Toolbox
+    http://calstore.internal.ericsson.com/ then navigate folder
+    "CBA Common Components and RDA / Dx Toolbox"

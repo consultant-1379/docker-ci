@@ -1,0 +1,8 @@
+<?xml version="1.0" ?>
+<products>
+<component>
+ <name>lde-reference_os</name>
+ <version>1.11.0-14</version>
+ <downloadfiles>chroot,sdk</downloadfiles>
+ </component>
+</products>

@@ -1,0 +1,20 @@
+# Compose file for the Jenkins Slave service
+
+version: '2'
+
+
+services:
+  build-start:
+    build:
+      context: ./
+      dockerfile: Dockerfile.jenkins-slave
+      args:
+       SSH_KEY: sshkey
+       VAULT_PASS: password
+       JENKINS_URL: provide jenkins url
+    image: jenkins-slave:latest
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "./auth/password:/root/.vault_pass"
+      - "../../docker-ci/:/docker-ci/:rw"
+    entrypoint: connect-slave.py --url "provide jenkins url" --label "jenkins-slave" --vault-pass /root/.vault_pass

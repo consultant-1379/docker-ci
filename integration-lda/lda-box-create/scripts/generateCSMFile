@@ -1,0 +1,197 @@
+#!/bin/bash -e
+
+function myHelp () {
+# Script used to generate csm.yml runtime
+cat <<-END
+Usage:
+------
+   -h | --help
+     Display this help
+     Provide arguments with required cluster size and optional versionFile
+
+   Syntax: ./generateCSMFile CLUSTER_SIZE versionFile EXTERNAL_FS
+
+   Example: ./generateCSMFile CLUSTER_SIZE versionFile
+
+END
+}
+
+# Exception Handling
+# run if user hits control-c
+function control_c()
+{
+  echo -en "\nwe got a ctrl+c lets clean up and exit\n"
+  exit
+}
+
+CLUSTER_SIZE=$1
+versionFile=$2
+
+# Validate clusterSize
+NODE_REGEX="^[1,2][+][0,1,2]$"
+if [[ ! $CLUSTER_SIZE  =~ ${NODE_REGEX} ]]; then
+    echo "Error: Cluster Size can only be 1+0,1+1,2+0 or 2+2"
+    myHelp
+    exit 1
+fi
+
+# Function to retry AM command execution
+function executeAMCommandWithRetry() {
+    command=$1
+    set +e
+    set -o pipefail
+    # Maximum attemps to retry AM command due to connectivity issues
+    MAX_RETRY_ATTEMPTS=5
+    for ((retryLoop=1; retryLoop < $MAX_RETRY_ATTEMPTS; retryLoop++))
+    {
+        $command |& tee /tmp/am_log.txt
+        if [ $? -ne 0 ]; then
+            if grep -q "No connectivity to Artifactory" /tmp/am_log.txt; then
+                echo "Failed due to connectivity issue. Retrying again..."
+            else
+                echo "Error: Downloading of packages failed"
+                exit 1
+            fi
+        else
+            break
+        fi
+    }
+    set +o pipefail
+    set -e
+}
+
+if [ $# -eq 3 ]; then
+   EXTERNAL_FS=$3
+fi
+
+# Download deployment packages
+COMMAND_TO_EXECUTE="artifact_manager --get-packages --input $versionFile --flat --outputDir $CSM_REGISTRY"
+executeAMCommandWithRetry "$COMMAND_TO_EXECUTE"
+
+echo "Cleaning local CSM LDA_WORKSPACE"
+csmcli clean --confirm
+
+echo "Importing yamls"
+#TODO: Check the set-csm-version
+csmcli set-csm-version 1.4
+csmcli import $CSM_REGISTRY
+
+# Dynamic generation of system model file
+# System create
+system_uid=LDA.base
+csmcli system-create $system_uid --name LDA.Basic --version 1.0.0 --product-number cxpXXXX
+
+# Searching for function uids
+function_uid=`csmcli function-list --pretty-print NO`
+
+# Add function
+echo "Adding functions to system model file"
+csmcli system-add-functions $system_uid "*"
+
+# Remove function
+echo "Removing functions in system model file to avoid multiple restarts"
+# to sustain lde.hardening function and remove lde.hardening.no.ssh.root.login.config.all service in order to enable audit logging only when lde-hardening-audit.yaml exists
+if grep -q "lde-hardening-audit.yaml" /root/.csm/workspace/csm.yml; then
+    csmcli system-remove-functions $system_uid lde.sles.ext coremw.pmrm.trace lde.base coremw.cbrf.trace sec.la coremw.cbrfcmwa.trace lde.sles.os.base coremw.logm.trace lde.watchdogd lde.dscp lde.timesyncalarm lde.remotefsalarm
+    csmcli service-remove-services lde.hardening.all lde.hardening.no.ssh.root.login.config.all
+else
+    csmcli system-remove-functions $system_uid lde.sles12.sp2.ext coremw.pmrm.trace lde.base coremw.cbrf.trace sec.la coremw.cbrfcmwa.trace lde.sles12.sp2.os.base coremw.logm.trace lde.watchdogd lde.dscp lde.timesyncalarm lde.remotefsalarm lde.hardening
+fi
+
+#Remove service
+echo "Removing services that are not needed for COM"
+csmcli function-remove-services lde.logcontroller lde.logcontroller.payload
+
+# Create role
+controller_uid=SCs
+payload_uid=PLs
+fileServer_uid=FSs
+echo "Creating controller UID using CSMCLI"
+csmcli role-create $controller_uid --name SCs --description SystemController --scalable NO
+
+if [ $CLUSTER_SIZE == "1+1" ] || [ $CLUSTER_SIZE == "2+2" ]; then
+  echo "Creating Payload UID using CSMCLI"
+  csmcli role-create $payload_uid --name PLs --description Payload --scalable YES
+fi
+
+if [ $EXTERNAL_FS ]; then
+  echo "Creating FileServer UID using CSMCLI"
+  csmcli role-create $fileServer_uid --name FSs --description FileServer --scalable NO
+fi
+
+# Add role to system
+echo "Adding roles to system using csmcli"
+if [ $EXTERNAL_FS ]; then
+    case $1 in
+        "1+0")
+            csmcli system-add-role $system_uid --role $controller_uid --assigned-to SC-1
+            csmcli system-add-role $system_uid --role $fileServer_uid
+            ;;
+        "1+1")
+            csmcli system-add-role $system_uid --role $controller_uid --assigned-to SC-1
+            csmcli system-add-role $system_uid --role $payload_uid --assigned-to PL-2
+            csmcli system-add-role $system_uid --role $fileServer_uid
+            ;;
+        "2+0")
+            csmcli system-add-role $system_uid --role $controller_uid --assigned-to SC-1,SC-2
+            csmcli system-add-role $system_uid --role $fileServer_uid
+            ;;
+        "2+2")
+            csmcli system-add-role $system_uid --role $controller_uid --assigned-to SC-1,SC-2
+            csmcli system-add-role $system_uid --role $payload_uid --assigned-to PL-3,PL-4
+            csmcli system-add-role $system_uid --role $fileServer_uid
+            ;;
+        *)
+         echo "Error: Cluster Size can only be 1+0,1+1,2+0 or 2+2"
+         exit 1
+         ;;
+    esac
+else
+    case $1 in
+        "1+0")
+            csmcli system-add-role $system_uid --role $controller_uid --assigned-to SC-1 ;;
+        "1+1")
+            csmcli system-add-role $system_uid --role $controller_uid --assigned-to SC-1
+            csmcli system-add-role $system_uid --role $payload_uid --assigned-to PL-2
+            ;;
+        "2+0")
+            csmcli system-add-role $system_uid --role $controller_uid --assigned-to SC-1,SC-2
+            ;;
+        "2+2")
+            csmcli system-add-role $system_uid --role $controller_uid --assigned-to SC-1,SC-2
+            csmcli system-add-role $system_uid --role $payload_uid --assigned-to PL-3,PL-4
+            ;;
+        *)
+         echo "Error: Cluster Size can only be 1+0,1+1,2+0 or 2+2"
+         exit 1
+         ;;
+    esac
+fi
+
+# Update constraints to NO in role
+echo "Updating contraints in Role using CSMCLI"
+csmcli role-update $controller_uid --external NO
+
+if [ $CLUSTER_SIZE == "1+1" ] || [ $CLUSTER_SIZE == "2+2" ]; then
+  csmcli role-update $payload_uid --external NO
+fi
+
+if [ $EXTERNAL_FS ]; then
+  csmcli role-update $fileServer_uid --external NO
+fi
+
+# Adding all the services to the role instead of specifying a regex as
+# it is causing problems if any new service name do not match with that regex.
+# Although all the services are added the orphan services which are present
+# will be removed using csmcli purge command later in the script.
+csmcli service-list --pretty-print NO
+echo "Adding services to controller UID"
+csmcli role-add-services $controller_uid "*"
+
+if [ $CLUSTER_SIZE == "1+1" ] || [ $CLUSTER_SIZE == "2+2" ]; then
+  csmcli role-add-services $payload_uid "*.pl" "*.all"
+fi
+
+if [ $EXTERNAL_FS ]; then
+  csmcli role-add-services $fileServer_uid "lde.base.all" "lde.sharedfs.config.all" "lde.sles.jeos.all"
+fi

@@ -1,0 +1,144 @@
+#!/bin/bash
+
+set -o errexit
+set -o pipefail
+
+# This script performs resize of cluster
+
+function myHelp () {
+# Script used to resize the cluster.
+cat <<-END
+Usage:
+------
+   -h | --help
+     Display this help
+
+     Provide arguments with required cluster size and IP address
+     Syntax: ./resize clusterSize IpAddress_SC1
+     Example: ./resize 2+2 10.0.2.15
+END
+}
+
+NEW_NODE_LIST=$1
+IP_ADDRESS=$2
+
+if [ $# -ne 2 ]; then
+    echo "Error: Provide both cluster size and IP address of SC1"
+    myHelp
+    exit 1
+fi
+
+NODE_REGEX="^[0-9][+][0-9]+$"
+if [[ ! $NEW_NODE_LIST =~ $NODE_REGEX ]]; then
+    echo "Error: Invalid format for cluster size"
+    myHelp
+    exit 1
+fi
+IP_REGEX="^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$"
+if [[ ! $IP_ADDRESS =~ $IP_REGEX ]]; then
+    echo "Error: Invalid format for IP"
+    myHelp
+    exit 1
+fi
+
+# Expect content to login into node
+expect <<END
+set timeout 20
+set PASSOWRD rootroot
+spawn ssh root@${IP_ADDRESS} rm -rf .ssh
+expect {
+    "Password:" {
+        send "\$PASSOWRD\r"
+    }
+
+    "yes/no)?" {
+        send "yes\r"
+        set timeout -1
+        expect {
+            "Password:" {
+                send "\$PASSOWRD\r"
+            }
+            timemout {
+                exit 1
+            }
+            eof {
+                exit 0
+            }
+        }
+    }
+
+    timeout {
+        exit 1
+    }
+    eof {
+        exit 0
+    }
+}
+expect {
+    eof { exit 0 }
+    timeout { exit 1 }
+}
+END
+
+touch ~/.ssh/known_hosts
+if [ -f ~/.ssh/known_hosts ]; then
+    sed -i "/$IP_ADDRESS/d" ~/.ssh/known_hosts
+fi
+
+./install_authorized_keys.sh ${IP_ADDRESS} > /dev/null
+
+CURRENT_NODES=$(expr $(ssh root@10.0.2.15 tipc-config -n | grep 1.1 | wc -l) + 1)
+scp resizeCluster.sh root@${IP_ADDRESS}:
+ssh root@${IP_ADDRESS} "chmod 777 /root/resizeCluster.sh"
+ssh root@${IP_ADDRESS} "/root/resizeCluster.sh $NEW_NODE_LIST"
+if [ $? -ne 0 ]; then
+    echo "Error: Cluster conf modification failed"
+    exit 1
+fi
+
+# Fetch total number of nodes in new cluster after modifying cluster.conf file
+NEW_NODES=$(expr $(echo $NEW_NODE_LIST| cut -d'+' -f 1) + $(echo $NEW_NODE_LIST| cut -d'+' -f 2))
+
+BASE_IP="10.0.2.15"
+
+# Increment base ip 16 with 2 to get payload start IP
+INCREMENT_BASE_IP=$(expr $(echo $BASE_IP | cut -d'.' -f4) + 4)
+BASE_PAYLOAD_IP="10.0.2.$INCREMENT_BASE_IP"
+
+# Loop through the number of new payloads to add the ping
+# Check the cluster size difference to run vagrant up, destory or skip commands
+if [ $CURRENT_NODES -eq $NEW_NODES ]; then
+    echo "Cluster size is same. Skipping vagrant up command"
+    exit 0
+elif [ $CURRENT_NODES -gt $NEW_NODES ]; then
+    NODE_COUNT_DIFFERENCE=$(expr $CURRENT_NODES - $NEW_NODES)
+    for (( i=1; i <= $NODE_COUNT_DIFFERENCE; i++ ))
+    do
+        PL_NUMBER=$(expr $NEW_NODES + $i)
+        echo "Destroying excess vagrant vm - PL-$PL_NUMBER"
+        vm=$CURRENT_NODES vagrant destroy PL-$PL_NUMBER
+    done
+else
+    NODE_COUNT_DIFFERENCE=$(expr $NEW_NODES - $CURRENT_NODES)
+    for (( i=1; i <= $NODE_COUNT_DIFFERENCE; i++ ))
+    do
+        PL_NUMBER=$(expr $CURRENT_NODES + $i)
+        echo "Execution of ping for node: PL-$PL_NUMBER"
+        IP=$(ssh root@${IP_ADDRESS} cat /cluster/etc/cluster.conf | grep "ip $PL_NUMBER" | cut -d' ' -f 5)
+        ping $IP  > /dev/null &
+        #INCREMENT_BASE_IP=$(expr $INCREMENT_BASE_IP + 1)
+    done
+    vm=$NEW_NODES vagrant up
+fi
+
+# Sleep has been added as vagrant might be slow to completely poweroff vms
+sleep 5s
+scp cmw-resize.sh root@${IP_ADDRESS}:
+ssh root@${IP_ADDRESS} "chmod 777 /root/cmw-resize.sh"
+ssh root@${IP_ADDRESS} "/root/cmw-resize.sh $NEW_NODE_LIST"
+if [ $? -ne 0 ]; then
+    echo "Error: Coremw resize failed"
+    exit 1
+fi
+
+ssh root@${IP_ADDRESS} "rm -rf /root/.ssh" || true

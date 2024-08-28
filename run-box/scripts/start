@@ -1,0 +1,198 @@
+#!/bin/bash
+#   This script creates a cluster using vagrant and installs required cba stack
+#
+#   Prerequisites:
+#       *   LDE box with user input version must exist in artifactory
+#
+#   The script will perform the following actions:
+#       1.  Create the cluster
+#       2.  Source DX Tools
+#       3.  Install required cba stack
+#
+#   Input arguments for running this script:
+#       1. TARGET (esm or legacy)
+#       2. CLUSTER_SIZE
+#       3. Version file path
+
+set -o errexit
+set -o pipefail
+
+function myHelp () {
+# Script used to resize the cluster.
+cat <<-END
+Usage:
+------
+   -h | --help
+     Display this help
+     Provide arguments with required cluster size and optional versionFile
+
+   Syntax: ./start target clusterSize [versionsFile]
+
+   Example: ./start esm 2+0
+   Example: ./start esm 2+2
+   Example: ./start legacy 2+0 versions.xml
+   Example: ./start legacy 2+2 versions.xml
+
+NOTE: versionFile is only required if target is legacy
+
+END
+}
+
+# Exception Handling
+# run if user hits control-c
+function control_c()
+{
+  echo -en "\nwe got a ctrl+c lets clean up and exit\n"
+  exit
+}
+
+# trap keyboard interrupt (control-c)
+trap control_c SIGINT
+
+TARGET=$1
+CLUSTER_SIZE=$2
+VERSIONS_FILE=$3
+
+# Validate the number of arguments passed to the script
+if [ $# -ne 2 ] && [ $# -ne 3 ] ; then
+   echo -e "\nError: Improper Arguments\n"
+   myHelp
+   exit 1
+fi
+
+# Validate clusterSize
+NODE_REGEX="^[0-9][+][0,2]$"
+if [[ ! $CLUSTER_SIZE  =~ ${NODE_REGEX} ]]; then
+    echo -e "\nError: Cluster Size can only be 2+0 or 2+2\n"
+    myHelp
+    exit 1
+fi
+
+# Validate clusterSize
+if [ "$TARGET" = "esm" ] && [ "$TARGET" = "legacy" ]; then
+    echo -e "\nError: Taget can only be esm or legacy\n"
+    myHelp
+    exit 1
+fi
+
+if [ "$TARGET" = "legacy" ]; then
+
+    if [ $# -ne 3 ]; then
+        echo -e "\nError: versionFile is required if target is legacy\n"
+        myHelp
+        exit 1
+
+   else
+       # Validate version xml file
+       if [[ ! ${VERSIONS_FILE} =~ .*xml* ]]; then
+          echo -e "\nError: Invalid version xml file\n"
+          myHelp
+          exit 1
+       fi
+   fi
+
+elif [ "$TARGET" = "esm" ] && [ $# -eq 3 ]; then
+    echo -e "\nError: versionFile is not required if target is esm\n"
+    myHelp
+    exit 1
+fi
+
+echo "Target is ${TARGET}"
+echo "Cluster size is ${CLUSTER_SIZE}"
+
+# Start libvirt
+set +o errexit
+start-libvirt
+set -o errexit
+
+# Add username and password to ArtifactManager.cfg file
+sed -i 's/.*username =.*/username = '$USER'/' /opt/dxtools/.am/workspace/ArtifactManager.cfg
+sed -i 's/.*password =.*/password = '$PASSWORD'/' /opt/dxtools/.am/workspace/ArtifactManager.cfg
+
+VMS="2VM"
+
+# Create boxes directory
+mkdir -p /boxes
+if [ "$CLUSTER_SIZE" == "2+2" ]; then
+    VMS="4VM"
+    curl -o /boxes/payload-node.box https://arm.epk.ericsson.se/artifactory/proj-cba-vagrant-local/ldews/payload-node.box
+    # Add the payload box to the local vagrant repository
+    set +e
+    vagrant box add /boxes/payload-node.box --name "payload" > /dev/null
+    set -e
+    ping 10.0.2.17 > /dev/null &
+    ping 10.0.2.18 > /dev/null &
+fi
+
+echo "Creation of cluster in progress..."
+
+if [ "$TARGET" == "legacy" ]; then
+    # Updating versionFile.xml for running it on legacy way
+    declare -x versionFile=$3
+    echo "Version File Path: ${versionFile}"
+    declare -x XSL=lde_version.xsl.template
+    declare -x VERSION_FILE=/tmp/$versionFile
+    declare -x LDE_VERSION_FILE=/tmp/ldeVersion.xml
+    declare -x ldews_version
+    declare -x ldews_condition="component[(name = 'ldews')]"
+    envsubst < $XSL > /tmp/version.xsl
+    xsltproc /tmp/version.xsl $versionFile > $VERSION_FILE
+
+    declare -x ldews_condition="component[not(name = 'ldews')]"
+    envsubst < $XSL > /tmp/ldeVersion.xsl
+    xsltproc /tmp/ldeVersion.xsl $versionFile > $LDE_VERSION_FILE
+
+    # Fetching ldews version from ldeVersionFile generated from versionFile
+    ldews_version=$(awk -F "[><]" '/version/{print $3}' $LDE_VERSION_FILE | sed '/^\s*$/d')
+
+    if ! ([[ $ldews_version =~ ^[0-9]{1}.[0-9]{1}.[0-9]{1}-[0-9]+$ ]]); then
+        ldews_version=$(curl -s "https://x-ci.rnd.ki.sw.ericsson.se/xci/md2/builds/com.ericsson.cba.ldews/ldews/latest?confidenceLevels=%5B$ldews_version=SUCCESS%5D" | grep -oP 'version\":"\K[^"]*')
+    fi
+
+    # Create boxes directory
+    mkdir -p /boxes
+    echo "Downloading box "ldews-$ldews_version-$VMS.box""
+    BOX_NAME="ldews-$ldews_version-$VMS.box"
+    curl -o /boxes/ldews-$ldews_version-$VMS.box https://arm.epk.ericsson.se/artifactory/proj-cba-vagrant-local/ldews/$ldews_version/$BOX_NAME
+
+    # Add the Vagrant box to the local vagrant repository
+    set +e
+    vagrant box add /boxes/$BOX_NAME --name "ldews" > /dev/null
+    set -e
+
+elif [ "$TARGET" == "esm" ]; then
+    # Add the Vagrant box to the local vagrant repository
+    set +e
+    vagrant box add /ldews-ict.box --name "ldews" > /dev/null
+    set -e
+fi
+
+# For some reason Vagrant doesn't understand that the VM:s has claimed an IP
+# even though they are up and running. But when you ping the nodes, Vagrant
+# understand it. This is a workaround.
+ping 10.0.2.15 > /dev/null &
+ping 10.0.2.16 > /dev/null &
+
+# Start the VM:s
+vm=${VMS:0:1}
+target=$TARGET vm=$vm vagrant up --provider=libvirt
+echo "Cluster prepared successfully"
+
+# set the IP Address of the cluster as environment variable
+declare -x IP_ADDRESS=10.0.2.15
+
+if [ "$TARGET" == "legacy" ]; then
+    # Setup DX-Tools
+    for file in $(find /opt/dxtools/ -name source\*.bash)
+    do
+        source $file
+    done
+
+    # Restage the cluster
+    echo "Installation of CBA components from version.xml in progress..."
+    ./restage $IP_ADDRESS $TARGET $VERSION_FILE
+    echo "Installation of CBA components from version.xml completed successfully"
+elif [ "$TARGET" == "esm" ]; then
+    # Restage the cluster
+    ./restage $IP_ADDRESS $TARGET
+fi

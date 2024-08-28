@@ -1,0 +1,118 @@
+#!/bin/bash
+
+set -o errexit
+
+function myHelp () {
+# Script used to resize the cluster.
+cat <<-END
+Usage:
+------
+   -h | --help
+     Display this help
+     Provide arguments with required cluster size and optional versionFile
+
+   Syntax: ./build-esm-box clusterSize [systemFile] [versionsFile]
+
+   Example: ./build-esm-box 2+0
+   Example: ./build-esm-box 2+2
+   Example: ./build-esm-box 2+0 system.yml versions.xml
+   Example: ./build-esm-box 2+2 system.yml versions.xml
+
+NOTE: If systemFile is passed as an argument, then versionFile is also mandatory
+
+END
+}
+
+# Exception Handling
+# run if user hits control-c
+function control_c()
+{
+  echo -en "\nwe got a ctrl+c lets clean up and exit\n"
+  docker rm "${CONTAINER_NAME}" --force &> /dev/null
+  exit
+}
+
+# Assign the input parameters to variables
+CLUSTER_SIZE=$1
+SYSTEM_FILE=$2
+VERSION_FILE=$3
+
+# Validate clusterSize
+NODE_REGEX="^[0-9][+][0,2]$"
+if [[ ! $CLUSTER_SIZE  =~ ${NODE_REGEX} ]]; then
+    echo "Error: Cluster Size can only be 2+0 or 2+2"
+    myHelp
+    exit 1
+fi
+
+# Validate the number of arguments passed to the script
+if [ $# -ne 1 ] && [ $# -ne 3 ] ; then
+   echo "Error: Invalid number of arguments passed"
+   myHelp
+   exit 1
+fi
+
+if [ $# -eq 3 ]; then
+    # Validate system yaml file
+    if [[ ! ${SYSTEM_FILE} =~ .*yml* ]]; then
+       echo "Error: Invalid system yaml file"
+       myHelp
+       exit 1
+    fi
+    # Validate version xml file
+    if [[ ! ${VERSION_FILE} =~ .*xml* ]]; then
+       echo "Error: Invalid version xml file"
+       myHelp
+       exit 1
+    fi
+fi
+
+
+
+IMAGE=$USER-esm-sut
+CONTAINER_NAME=${IMAGE}
+CURRENT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+IMAGE_EXISTS=$(docker images --quiet "${IMAGE}")
+
+# Build the docker image if it does not exist
+if [ -z "${IMAGE_EXISTS}" ]; then
+    docker build --tag "${IMAGE}" --file Dockerfile.vagrant~esm.box .
+fi
+
+# trap keyboard interrupt (control-c)
+trap control_c SIGINT
+
+# Remove if any previous container exists with the container name
+set +o errexit
+docker rm "${CONTAINER_NAME}" --force &> /dev/null
+set -o errexit
+
+# Create the docker container
+docker create --name "${CONTAINER_NAME}" --cap-add SYS_ADMIN --device /dev/kvm:/dev/kvm:rw --privileged --security-opt apparmor:unconfined "${IMAGE}" /start "${CLUSTER_SIZE}" /root/.csm/config/versions.xml
+
+# Copy User provided files to container
+if [ $# -eq 3 ]; then
+    if [ "${CLUSTER_SIZE}" == "2+2" ]; then
+        docker cp "${SYSTEM_FILE}" "${CONTAINER_NAME}":/root/.csm/config/CBA-MW-composed-4VM.yml
+    else
+        docker cp "${SYSTEM_FILE}" "${CONTAINER_NAME}":/root/.csm/config/CBA-MW-composed.yml
+    fi
+    docker cp "${VERSION_FILE}" "${CONTAINER_NAME}":/root/.csm/config/versions.xml
+fi
+
+# Start the container
+docker start "${CONTAINER_NAME}"
+# Follow logs and wait for exit code
+docker logs --follow "${CONTAINER_NAME}"
+RETVAL=$(docker inspect --format {{.State.ExitCode}} "$CONTAINER_NAME")
+if [ "${RETVAL}" -ne 0 ]; then
+    echo "Container exited with error"
+    exit 2
+else
+   echo "Copying box from container"
+   docker cp "${CONTAINER_NAME}":/ldews-ict.box "${CURRENT_DIR}"/../boxes
+   docker cp "${CONTAINER_NAME}":/configdrive.iso "${CURRENT_DIR}"/../boxes
+fi
+
+# Remove the exited container
+docker rm "${CONTAINER_NAME}" --force &> /dev/null

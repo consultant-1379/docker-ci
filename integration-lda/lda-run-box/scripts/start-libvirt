@@ -1,0 +1,31 @@
+#!/bin/bash
+
+# The host kvm gid is not the same as the container kvm gid, so we change the gid of kvm
+hostkvmgid=$(stat -c %g /dev/kvm)
+
+if [ $hostkvmgid -eq 0 ]; then
+  # No group on the device, lets set our group and permissions
+  chown root:kvm /dev/kvm
+  chmod g+rw /dev/kvm
+else
+  # Check if there is a collision with containers groups
+  candidategroup=$(getent group $hostkvmgid)
+  if [ $? -ne 0 ]; then
+    groupmod -g $(stat -c %g /dev/kvm) kvm
+  else
+    echo $candidategroup | grep "^kvm:" > /dev/null || (echo "The gid $hostkvmgid collides with non kvm group $candidategroup" && exit 1)
+  fi
+fi
+
+# To allow libvirtd creating tun devices under the bridge
+if [ ! -c /dev/net/tun ]; then
+  mkdir -p /dev/net
+  mknod /dev/net/tun c 10 200
+fi
+
+# Start the libvirt deamon
+/etc/init.d/libvirt-bin start
+
+#start ssh for container
+sed -i 's/.*Port 22/Port 22/' /etc/ssh/ssh_config
+/etc/init.d/ssh start

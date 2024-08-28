@@ -1,0 +1,37 @@
+#!/bin/bash
+# Start script to start libvirtd in docker container
+
+# The host kvm gid is not the same as the container kvm gid, so we change the gid of kvm
+hostkvmgid=$(stat -c %g /dev/kvm)
+
+if [ $hostkvmgid -eq 0 ]; then
+  # No group on the device, lets set our group and permissions
+  chown root:kvm /dev/kvm
+  chmod g+rw /dev/kvm
+else
+  # Check if there is a collision with containers groups
+  candidategroup=$(getent group $hostkvmgid)
+  if [ $? -ne 0 ]; then
+    groupmod -g $(stat -c %g /dev/kvm) kvm
+  else
+    echo $candidategroup | grep "^kvm:" > /dev/null || (echo "The gid $hostkvmgid collides with non kvm group $candidategroup" && exit 1)
+  fi
+fi
+
+# To allow libvirtd creating tun devices under the bridge
+if [ ! -c /dev/net/tun ]; then
+  mkdir -p /dev/net
+  mknod /dev/net/tun c 10 200
+fi
+
+# Create bridge not using libvirtd. I am getting permission issues on the /dev/net/tun and I tried few workaround including mknod, adding netdev group to user etc
+BRIDGE=virbr0
+brctl addbr $BRIDGE
+ip addr add 192.168.1.254/24 dev $BRIDGE
+ip link set $BRIDGE up
+
+# Start libvirtd
+/etc/init.d/libvirt-bin start
+
+# We dont start anything by default.
+# If autostart of domain is needed then the following links shall be created /etc/libvirt/qemu/autostart/SC-1.xml -> /etc/libvirt/qemu/SC-1.xml

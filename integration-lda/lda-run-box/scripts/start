@@ -1,0 +1,81 @@
+#!/bin/bash
+#   This script creates a cluster using vagrant and installs required cba stack
+#
+#   Prerequisites:
+#       *   LDA box with user input version must exist in artifactory
+#
+#   The script will perform the following actions:
+#       1.  Create the cluster
+
+set -o errexit
+set -o pipefail
+
+function myHelp () {
+# Script used to resize the cluster.
+cat <<-END
+Usage:
+------
+   -h | --help
+     Display this help
+     Provide arguments with required cluster size and optional versionFile
+
+   Syntax: ./start 1+0
+
+   Example: ./start 1+1
+
+END
+}
+
+# Exception Handling
+# run if user hits control-c
+function control_c()
+{
+  echo -en "\nwe got a ctrl+c lets clean up and exit\n"
+  exit
+}
+
+# trap keyboard interrupt (control-c)
+trap control_c SIGINT
+
+CLUSTER_SIZE=$1
+
+# Validate clusterSize
+NODE_REGEX="^[1][+][0,1]$"
+if [[ ! $CLUSTER_SIZE  =~ ${NODE_REGEX} ]]; then
+    echo "Error: Cluster Size can only be 1+0 or 1+1"
+    myHelp
+    exit 1
+fi
+
+# Validate the number of arguments passed to the script
+if [ $# -ne 1 ] ; then
+   echo "Error: Invalid number of arguments passed"
+   myHelp
+   exit 1
+fi
+
+# Start libvirt
+set +o errexit
+start-libvirt
+
+echo "Adding lda.box with name lda"
+vagrant box add /lda.box --name "lda" > /dev/null
+set -o errexit
+
+# Create config_drive using gendrive tool
+gendrive init --output /config_drives
+sed -i "s/#sshkey_path/sshkey_path/g" /config_drives/gendrive.yaml
+
+#Check the cluster size and modify the gendrive.yaml accordingly
+if [ $CLUSTER_SIZE == "1+1" ] ; then
+   VMS=2
+   sed -i "s/SC-2/PL-2/g" /config_drives/gendrive.yaml
+else
+   VMS=1
+   sed -i "/SC-2/d" /config_drives/gendrive.yaml
+fi
+gendrive create --ovf /ovf-env.xml --output /config_drives
+
+# Bring up the cluster
+vm=$VMS vagrant up --provider=libvirt
+echo "Cluster prepared successfully"

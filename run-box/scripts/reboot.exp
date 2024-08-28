@@ -1,0 +1,135 @@
+#!/usr/bin/expect --
+
+#   This script performs reboot to all nodes in cluster and checks for status
+
+set timeout 600
+set IP [lrange $argv 0 0]
+set LOOP 1
+set password rootroot
+
+spawn ssh root@$IP
+
+expect {
+    "Password:" {
+        send "\$password\r"
+    }
+
+    "yes/no)?" {
+        send "yes\r"
+        set timeout -1
+        expect {
+            "Password:" {
+                send "\$password\r"
+            }
+            timeout {
+                exit 1
+            }
+            eof {
+                exit 1
+            }
+        }
+    }
+
+    timeout {
+        exit 1
+    }
+    eof {
+        exit 1
+    }
+}
+
+set timeout 3600
+
+expect {
+    "#" {
+        send "for a in \$(ls /cluster/nodes);do(cluster rpm -s -n \$a);done\r"
+        expect "#"
+        send "cluster reboot -a\r"
+        expect {
+            "#" {
+                send "exit\r"
+                expect {
+                    "closed." {
+                        puts "Sleeping 45 seconds"
+                        sleep 45
+                    }
+                }
+            }
+        }
+    }
+    timeout {
+        exit 1
+    }
+}
+
+set timeout 20
+
+while {$LOOP > 0} {
+    spawn ssh root@$IP
+    expect {
+        "#" {
+             puts "Still able to connect to the cluster"
+             set LOOP 1
+             end "logout\r"
+             close
+             sleep 10
+        }
+
+        timeout {
+            puts "The cluster is rebooting now - TIMEOUT"
+            set LOOP -1
+            close
+        }
+
+        "refused" {
+            puts "The cluster is rebooting now - Refused"
+            set LOOP -1
+            close
+            sleep 10
+        }
+
+        "host" {
+            puts "The cluster is rebooting now - No Host"
+            set LOOP -1
+            close
+            sleep 10
+        }
+    }
+}
+
+set LOOP 1
+
+while {$LOOP > 0} {
+    spawn ssh root@$IP
+    expect {
+        "Password: " {
+            set timeout -1
+        set LOOP -1
+        send "\$password\r"
+        expect "#"
+        send "exit\r"
+        exit 0
+    }
+
+    "refused" {
+        puts "REFUSED"
+        set LOOP 1
+        close
+        sleep 10
+    }
+
+    "host" {
+        puts "NO HOST"
+        set LOOP 1
+        close
+        sleep 10
+    }
+
+    timeout {
+        puts "TIMEOUT"
+        set LOOP 1
+        close
+        sleep 10
+    }
+    }
+}

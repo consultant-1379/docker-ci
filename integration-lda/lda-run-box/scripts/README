@@ -1,0 +1,26 @@
+# start
+
+The script will help in creating a vagrant box with
+ESM 2.0 flow for LDA
+
+## Example Usage
+
+Execute following command to build new box:
+
+Usage:
+------
+   -h | --help
+     Display this help
+     Provide arguments with required cluster size and optional versionFile
+
+   Syntax: ./start clusterSize
+
+   Example: ./start 1+0
+   Example: ./start 1+1
+
+## Steps performed by the start script if target is esm
+
+  1. Adds the vagrant box available in the /boxes directory
+
+  2. Starts the cluster
+

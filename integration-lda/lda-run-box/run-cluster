@@ -1,0 +1,47 @@
+#!/bin/bash
+
+set -o errexit
+set -o nounset
+set -o pipefail
+
+IMAGE=$USER-run-lda-box
+CONTAINER_NAME=${IMAGE}
+CURRENT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+IMAGE_EXISTS=$(docker images --quiet "${IMAGE}")
+LDA_BOX="${CURRENT_DIR}"/../../boxes/lda.box
+OVF_FILE="${CURRENT_DIR}"/../../boxes/ovf-env.xml
+
+# Remove if any previous container exists with the container name
+set +o errexit
+docker rm "${CONTAINER_NAME}" --force --volumes &> /dev/null
+set -o errexit
+
+# Build the docker image if it does not exist
+if [ -z "${IMAGE_EXISTS}" ]; then
+    docker build --tag "${IMAGE}" --file Dockerfile.vagrant~lda.sut .
+fi
+
+# Create the docker container
+docker create -it --privileged --cap-add=ALL --name "$CONTAINER_NAME" "$IMAGE" "$@" /bin/bash
+
+# Check if file exists
+if [ -f "$LDA_BOX" ]; then
+   docker cp "$LDA_BOX" "${CONTAINER_NAME}":/
+else
+   echo "Error: $LDA_BOX does not exist"
+   exit 1
+fi
+
+if [ -f "$OVF_FILE" ]; then
+   docker cp "$OVF_FILE" "${CONTAINER_NAME}":/
+else
+   echo "Error: $OVF_FILE does not exist"
+   exit 1
+fi
+
+# Start the container
+docker start $CONTAINER_NAME
+
+# Attach the container
+docker attach $CONTAINER_NAME
+exit 0

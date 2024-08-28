@@ -1,0 +1,36 @@
+#!/bin/bash -x
+set -e
+# Since mkpasswd is not available in all systems, here are some
+# hashes for password "vagrant".  DES based hash is most compatible
+# with old systems.
+pwhash='3hsUgsrz5T102'
+
+# Create user, set passwords
+groupadd vagrant
+useradd -m vagrant -g vagrant -p $pwhash
+
+# Add vagrant as global user in cluster
+getent passwd vagrant >> /cluster/etc/passwd
+getent shadow vagrant >> /cluster/etc/shadow
+
+# Set the default ssh key for vagrant user
+mkdir -m 700 /home/vagrant/.ssh
+cat > /home/vagrant/.ssh/authorized_keys <<EOF
+ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEA6NF8iallvQVp22WDkTkyrtvp9eWW6A8YVr+kz4TjGYe7gHzIw+niNltGEFHzD8+v1I2YJ6oXevct1YeS0o9HZyN1Q9qgCgzUFtdOKLv6IedplqoPkcmF0aYet2PkEDo3MlTBckFXPITAMzF8dJSIFo9D8HfdOV0IAdx4O7PtixWKn5y2hMNG0zQPyUecp4pzC6kivAIhyfHilFR61RGL+GPXQ2MWZWFYbAGjyiYJnAmCP3NOTd0jMZEnDkbUvxhMmBYSdETk1rRgm+R4LOzFUGaHqHDLKLX+FIPKcF96hrucXzcWyLbIbEgE98OHlnVYCzRdK8jlqm8tehUc9c9WhQ== vagrant insecure public key
+EOF
+chmod 600 /home/vagrant/.ssh/authorized_keys
+chown -R vagrant:vagrant /home/vagrant
+
+# Allow passwordless sudo
+cp /etc/sudoers /cluster/etc/sudoers
+echo "vagrant ALL=(ALL) NOPASSWD:ALL" >> /cluster/etc/sudoers
+echo "Defaults:vagrant !requiretty" >> /cluster/etc/sudoers
+
+# Problem:
+#    No /sbin in PATH in SLE
+#    https://github.com/mitchellh/vagrant/issues/2775
+# Workaround:
+echo "export PATH=\$PATH:/sbin/:/usr/sbin" >> /home/vagrant/.bashrc
+
+# enable core dumps for vagrant user
+echo "ulimit -c unlimited" >> /home/vagrant/.bashrc

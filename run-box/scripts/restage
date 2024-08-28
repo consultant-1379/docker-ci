@@ -1,0 +1,90 @@
+#!/bin/bash
+
+#   This script performs instalaltion of required CBA stack in cluster
+#
+#   The script will perform the following actions:
+#       1.  Generate the CBA stack
+#       2.  Install the repo in the cluster using AIT
+#       3.  Install authorized keys in the cluster
+#       4.  Perform clean up of unwanted repositories in cluster
+#       5.  Check cluster status
+
+set -o errexit
+set -o nounset
+set -o pipefail
+
+export IP_ADDRESS=$1
+export TARGET=$2
+if [ "$TARGET" == "legacy" ]; then
+    export VERSION_FILE=$3
+fi
+# remove the .ssh if needed
+expect <<END
+set timeout 20
+set password rootroot
+spawn ssh root@${IP_ADDRESS} rm -rf .ssh
+expect {
+    "Password:" {
+        send "\$password\r"
+    }
+
+    "yes/no)?" {
+        send "yes\r"
+        set timeout -1
+        expect {
+            "Password:" {
+                send "\$password\r"
+            }
+            timemout {
+                exit 1
+            }
+            eof {
+                exit 0
+            }
+        }
+    }
+
+    timeout {
+        exit 1
+    }
+    eof {
+        exit 0
+    }
+}
+expect {
+    eof { exit 0 }
+    timeout { exit 1 }
+}
+END
+
+touch ~/.ssh/known_hosts
+if [ -f ~/.ssh/known_hosts ]; then
+    sed -i "/$IP_ADDRESS/d" ~/.ssh/known_hosts
+fi
+
+if [ "$TARGET" == "legacy" ]; then
+    # creating the repo that will have the AIT repo
+    REPO="$(mktemp -d /tmp/repo.XXXXXXXX)"
+    trap "rm -rf $REPO" EXIT
+
+    # generating the stack from SWP file
+    ./aitrepo_gen.sh $REPO $VERSION_FILE
+
+    ./ait_install.py -i ${IP_ADDRESS} -p $REPO/swp.tgz
+fi
+
+./install_authorized_keys.sh ${IP_ADDRESS}
+
+if [ "$TARGET" == "legacy" ]; then
+    echo "Cleaning up"
+    ssh root@${IP_ADDRESS} "rm -rf /storage/no-backup/ait-* /storage/system/software/ait-*" || true
+fi
+
+scp ./CheckClusterStatus.sh root@${IP_ADDRESS}:
+ssh root@${IP_ADDRESS} "/root/CheckClusterStatus.sh"
+ssh root@${IP_ADDRESS} "rm -rf /root/.ssh" || true
+
+#TODO: Collect logs to find why com is dealying to restart the lde-sshd service. Need to raise TR/Jira
+#below sleep time is for lde-sshd service to be restarted after com installation
+echo "Waiting for component services to be up and running"
+sleep 30

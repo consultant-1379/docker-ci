@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<products schemaVersion="1.1" distribution="sle">
+  <component>
+    <name>ldews</name>
+    <version>cbaBaselineFunctionality</version>
+    <downloadfiles>runtime,deployment</downloadfiles>
+  </component>
+  <component>
+    <name>coremw_x86_64</name>
+    <version>cbaBaselineFunctionality</version>
+    <downloadfiles>runtime,deployment</downloadfiles>
+  </component>
+</products>

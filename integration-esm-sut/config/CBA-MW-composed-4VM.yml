@@ -1,0 +1,29 @@
+csm-version: 1.0
+systems:
+- uid: CBA.reference.basic
+  name: CBA.basic
+  version: 1.0.0
+  product-number: CXP12345
+  description: COM stack on a 2+2 node with CMW and LDE
+  functions:
+  - ldews.base
+  - coremw.base
+  roles:
+  - role: controller
+    assigned-to: [SC-1, SC-2]
+  - role: payload
+    assigned-to: [PL-3, PL-4]
+roles:
+- uid: controller
+  name: controller
+  description: System controller role hosting OAM services
+  services:
+  - ldews.os.aggregation
+  - coremw.aggregation
+  - coremw.all
+- uid: payload
+  name: payload
+  description: Payloads
+  services:
+  - coremw.all
+  - ldews.os.payload
